@@ -4,7 +4,7 @@ PATCHLEVEL = 19
 SUBLEVEL = 191
 EXTRAVERSION =
 NAME = "People's Front"
-KCFLAGS=-w
+
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
 # More info can be located in ./README
