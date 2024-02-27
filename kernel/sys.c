@@ -72,13 +72,6 @@
 #include <linux/uaccess.h>
 #include <asm/io.h>
 #include <asm/unistd.h>
-#ifdef CONFIG_MTK_TASK_TURBO
-#include <mt-plat/turbo_common.h>
-#endif
-
-#ifdef CONFIG_SECURITY_DEFEX
-#include <linux/defex.h>
-#endif
 
 #include "uid16.h"
 
@@ -300,14 +293,6 @@ SYSCALL_DEFINE2(getpriority, int, which, int, who)
 			if (niceval > retval)
 				retval = niceval;
 		}
-#ifdef CONFIG_MTK_ENG_BUILD
-		if (retval == -ESRCH && current->pid == who) {
-			pr_warn("getpriority return unexpected value who:%d "
-				"current:%d niceval:%d retvale:%d", who,
-				current->pid, niceval, retval);
-			BUG();
-		}
-#endif
 		break;
 	case PRIO_PGRP:
 		if (who)
@@ -828,11 +813,6 @@ long __sys_setfsuid(uid_t uid)
 	if (!uid_valid(kuid))
 		return old_fsuid;
 
-#ifdef CONFIG_SECURITY_DEFEX
-	if (task_defex_enforce(current, NULL, -__NR_setfsuid))
-		return old_fsuid;
-#endif
-
 	new = prepare_creds();
 	if (!new)
 		return old_fsuid;
@@ -876,11 +856,6 @@ long __sys_setfsgid(gid_t gid)
 	kgid = make_kgid(old->user_ns, gid);
 	if (!gid_valid(kgid))
 		return old_fsgid;
-
-#ifdef CONFIG_SECURITY_DEFEX
-	if (task_defex_enforce(current, NULL, -__NR_setfsgid))
-		return old_fsgid;
-#endif
 
 	new = prepare_creds();
 	if (!new)
@@ -1563,6 +1538,8 @@ int do_prlimit(struct task_struct *tsk, unsigned int resource,
 
 	if (resource >= RLIM_NLIMITS)
 		return -EINVAL;
+	resource = array_index_nospec(resource, RLIM_NLIMITS);
+
 	if (new_rlim) {
 		if (new_rlim->rlim_cur > new_rlim->rlim_max)
 			return -EINVAL;
@@ -1963,13 +1940,6 @@ static int validate_prctl_map(struct prctl_mm_map *prctl_map)
 #undef __prctl_check_order
 
 	error = -EINVAL;
-
-	/*
-	 * @brk should be after @end_data in traditional maps.
-	 */
-	if (prctl_map->start_brk <= prctl_map->end_data ||
-	    prctl_map->brk <= prctl_map->end_data)
-		goto out;
 
 	/*
 	 * Neither we should allow to override limits if they set.
@@ -2506,9 +2476,6 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 			return -EFAULT;
 		set_task_comm(me, comm);
 		proc_comm_connector(me);
-#ifdef CONFIG_MTK_TASK_TURBO
-		sys_set_turbo_task(me);
-#endif
 		break;
 	case PR_GET_NAME:
 		get_task_comm(comm, me);

@@ -327,10 +327,6 @@ static int ddebug_parse_query(char *words[], int nwords,
 	}
 	memset(query, 0, sizeof(*query));
 
-	if (modname)
-		/* support $modname.dyndbg=<multiple queries> */
-		query->module = modname;
-
 	for (i = 0; i < nwords; i += 2) {
 		if (!strcmp(words[i], "func")) {
 			rc = check_set(&query->function, words[i+1], "func");
@@ -379,6 +375,13 @@ static int ddebug_parse_query(char *words[], int nwords,
 		if (rc)
 			return rc;
 	}
+	if (!query->module && modname)
+		/*
+		 * support $modname.dyndbg=<multiple queries>, when
+		 * not given in the query itself
+		 */
+		query->module = modname;
+
 	vpr_info_dq(query, "parsed");
 	return 0;
 }
@@ -546,148 +549,6 @@ static char *dynamic_emit_prefix(const struct _ddebug *desc, char *buf)
 
 	return buf;
 }
-
-#ifdef CONFIG_LOG_TOO_MUCH_WARNING
-void __dynamic_pr_emerg(struct _ddebug *descriptor, const char *fmt, ...)
-{
-	va_list args;
-	struct va_format vaf;
-	char buf[PREFIX_SIZE];
-
-	BUG_ON(!descriptor);
-	BUG_ON(!fmt);
-
-	va_start(args, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &args;
-
-	printk(KERN_EMERG "%s%pV", dynamic_emit_prefix(descriptor, buf), &vaf);
-
-	va_end(args);
-}
-EXPORT_SYMBOL(__dynamic_pr_emerg);
-
-void __dynamic_pr_alert(struct _ddebug *descriptor, const char *fmt, ...)
-{
-	va_list args;
-	struct va_format vaf;
-	char buf[PREFIX_SIZE];
-
-	BUG_ON(!descriptor);
-	BUG_ON(!fmt);
-
-	va_start(args, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &args;
-
-	printk(KERN_ALERT "%s%pV", dynamic_emit_prefix(descriptor, buf), &vaf);
-
-	va_end(args);
-}
-EXPORT_SYMBOL(__dynamic_pr_alert);
-
-void __dynamic_pr_crit(struct _ddebug *descriptor, const char *fmt, ...)
-{
-	va_list args;
-	struct va_format vaf;
-	char buf[PREFIX_SIZE];
-
-	BUG_ON(!descriptor);
-	BUG_ON(!fmt);
-
-	va_start(args, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &args;
-
-	printk(KERN_CRIT "%s%pV", dynamic_emit_prefix(descriptor, buf), &vaf);
-
-	va_end(args);
-}
-EXPORT_SYMBOL(__dynamic_pr_crit);
-
-void __dynamic_pr_err(struct _ddebug *descriptor, const char *fmt, ...)
-{
-	va_list args;
-	struct va_format vaf;
-	char buf[PREFIX_SIZE];
-
-	BUG_ON(!descriptor);
-	BUG_ON(!fmt);
-
-	va_start(args, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &args;
-
-	printk(KERN_ERR "%s%pV", dynamic_emit_prefix(descriptor, buf), &vaf);
-
-	va_end(args);
-}
-EXPORT_SYMBOL(__dynamic_pr_err);
-
-void __dynamic_pr_warn(struct _ddebug *descriptor, const char *fmt, ...)
-{
-	va_list args;
-	struct va_format vaf;
-	char buf[PREFIX_SIZE];
-
-	BUG_ON(!descriptor);
-	BUG_ON(!fmt);
-
-	va_start(args, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &args;
-
-	printk(KERN_WARNING "%s%pV", dynamic_emit_prefix(descriptor, buf), &vaf);
-
-	va_end(args);
-}
-EXPORT_SYMBOL(__dynamic_pr_warn);
-
-void __dynamic_pr_notice(struct _ddebug *descriptor, const char *fmt, ...)
-{
-	va_list args;
-	struct va_format vaf;
-	char buf[PREFIX_SIZE];
-
-	BUG_ON(!descriptor);
-	BUG_ON(!fmt);
-
-	va_start(args, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &args;
-
-	printk(KERN_NOTICE "%s%pV", dynamic_emit_prefix(descriptor, buf), &vaf);
-
-	va_end(args);
-}
-EXPORT_SYMBOL(__dynamic_pr_notice);
-
-void __dynamic_pr_info(struct _ddebug *descriptor, const char *fmt, ...)
-{
-	va_list args;
-	struct va_format vaf;
-	char buf[PREFIX_SIZE];
-
-	BUG_ON(!descriptor);
-	BUG_ON(!fmt);
-
-	va_start(args, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &args;
-
-	printk(KERN_INFO "%s%pV", dynamic_emit_prefix(descriptor, buf), &vaf);
-
-	va_end(args);
-}
-EXPORT_SYMBOL(__dynamic_pr_info);
-#endif
 
 void __dynamic_pr_debug(struct _ddebug *descriptor, const char *fmt, ...)
 {
@@ -1127,7 +988,7 @@ static int __init dynamic_debug_init(void)
 	int n = 0, entries = 0, modct = 0;
 	int verbose_bytes = 0;
 
-	if (__start___verbose == __stop___verbose) {
+	if (&__start___verbose == &__stop___verbose) {
 		pr_warn("_ddebug table is empty in a CONFIG_DYNAMIC_DEBUG build\n");
 		return 1;
 	}

@@ -41,12 +41,6 @@ static inline struct backing_dev_info *bdi_alloc(gfp_t gfp_mask)
 	return bdi_alloc_node(gfp_mask, NUMA_NO_NODE);
 }
 
-struct backing_dev_info *sec_bdi_alloc_node(gfp_t gfp_mask, int node_id);
-static inline struct backing_dev_info *sec_bdi_alloc(gfp_t gfp_mask)
-{
-	return sec_bdi_alloc_node(gfp_mask, NUMA_NO_NODE);
-}
-
 void wb_start_background_writeback(struct bdi_writeback *wb);
 void wb_workfn(struct work_struct *work);
 void wb_wakeup_delayed(struct bdi_writeback *wb);
@@ -140,7 +134,6 @@ int bdi_set_max_ratio(struct backing_dev_info *bdi, unsigned int max_ratio);
 #define BDI_CAP_STRICTLIMIT	0x00000010
 #define BDI_CAP_CGROUP_WRITEBACK 0x00000020
 #define BDI_CAP_SYNCHRONOUS_IO	0x00000040
-#define BDI_CAP_SEC_DEBUG	0x00000080
 
 #define BDI_CAP_NO_ACCT_AND_WRITEBACK \
 	(BDI_CAP_NO_WRITEBACK | BDI_CAP_NO_ACCT_DIRTY | BDI_CAP_NO_ACCT_WB)
@@ -506,13 +499,6 @@ static inline int bdi_rw_congested(struct backing_dev_info *bdi)
 				  (1 << WB_async_congested));
 }
 
-extern const char *bdi_unknown_name;
-
-static inline const char *bdi_dev_name(struct backing_dev_info *bdi)
-{
-	if (!bdi || !bdi->dev)
-		return bdi_unknown_name;
-	return dev_name(bdi->dev);
-}
+const char *bdi_dev_name(struct backing_dev_info *bdi);
 
 #endif	/* _LINUX_BACKING_DEV_H */

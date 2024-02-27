@@ -35,7 +35,6 @@ enum phy_mode {
 	PHY_MODE_USB_DEVICE_HS,
 	PHY_MODE_USB_DEVICE_SS,
 	PHY_MODE_USB_OTG,
-	PHY_MODE_UART,
 	PHY_MODE_SGMII,
 	PHY_MODE_2500SGMII,
 	PHY_MODE_10GKR,
@@ -59,8 +58,7 @@ struct phy_ops {
 	int	(*exit)(struct phy *phy);
 	int	(*power_on)(struct phy *phy);
 	int	(*power_off)(struct phy *phy);
-	int	(*set_mode)(struct phy *phy, enum phy_mode mode, int submode);
-	int	(*get_mode_ext)(struct phy *phy);
+	int	(*set_mode)(struct phy *phy, enum phy_mode mode);
 	int	(*reset)(struct phy *phy);
 	int	(*calibrate)(struct phy *phy);
 	struct module *owner;
@@ -164,11 +162,7 @@ int phy_init(struct phy *phy);
 int phy_exit(struct phy *phy);
 int phy_power_on(struct phy *phy);
 int phy_power_off(struct phy *phy);
-int phy_set_mode_ext(struct phy *phy, enum phy_mode mode, int submode);
-#define phy_set_mode(phy, mode) \
-	phy_set_mode_ext(phy, mode, 0)
-int phy_get_mode_ext(struct phy *phy);
-
+int phy_set_mode(struct phy *phy, enum phy_mode mode);
 static inline enum phy_mode phy_get_mode(struct phy *phy)
 {
 	return phy->attrs.mode;
@@ -282,16 +276,12 @@ static inline int phy_power_off(struct phy *phy)
 	return -ENOSYS;
 }
 
-static inline int phy_set_mode_ext(struct phy *phy, enum phy_mode mode,
-				   int submode)
+static inline int phy_set_mode(struct phy *phy, enum phy_mode mode)
 {
 	if (!phy)
 		return 0;
 	return -ENOSYS;
 }
-
-#define phy_set_mode(phy, mode) \
-	phy_set_mode_ext(phy, mode, 0)
 
 static inline enum phy_mode phy_get_mode(struct phy *phy)
 {

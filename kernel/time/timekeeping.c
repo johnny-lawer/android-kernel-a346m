@@ -22,6 +22,7 @@
 #include <linux/clocksource.h>
 #include <linux/jiffies.h>
 #include <linux/time.h>
+#include <linux/timex.h>
 #include <linux/tick.h>
 #include <linux/stop_machine.h>
 #include <linux/pvclock_gtod.h>
@@ -1240,8 +1241,7 @@ int do_settimeofday64(const struct timespec64 *ts)
 	timekeeping_forward_now(tk);
 
 	xt = tk_xtime(tk);
-	ts_delta.tv_sec = ts->tv_sec - xt.tv_sec;
-	ts_delta.tv_nsec = ts->tv_nsec - xt.tv_nsec;
+	ts_delta = timespec64_sub(*ts, xt);
 
 	if (timespec64_compare(&tk->wall_to_monotonic, &ts_delta) > 0) {
 		ret = -EINVAL;
@@ -1595,10 +1595,6 @@ static struct timespec64 timekeeping_suspend_time;
 static void __timekeeping_inject_sleeptime(struct timekeeper *tk,
 					   const struct timespec64 *delta)
 {
-#ifdef CONFIG_SEC_PM
-	struct timespec64 sleep_duration;
-#endif /* CONFIG_SEC_PM  */
-
 	if (!timespec64_valid_strict(delta)) {
 		printk_deferred(KERN_WARNING
 				"__timekeeping_inject_sleeptime: Invalid "
@@ -1608,14 +1604,7 @@ static void __timekeeping_inject_sleeptime(struct timekeeper *tk,
 	tk_xtime_add(tk, delta);
 	tk_set_wall_to_mono(tk, timespec64_sub(tk->wall_to_monotonic, *delta));
 	tk_update_sleep_time(tk, timespec64_to_ktime(*delta));
-#ifdef CONFIG_SEC_PM
-    sleep_duration = *delta;
-    if (timespec64_to_ns(&sleep_duration) > 0)
-        printk_deferred("PM: Timekeeping suspended for %lld.%03lu seconds\n",
-                   (s64)sleep_duration.tv_sec, sleep_duration.tv_nsec / NSEC_PER_MSEC);
-#else
-    tk_debug_account_sleep_time(delta);
-#endif /* CONFIG_SEC_PM  */
+	tk_debug_account_sleep_time(delta);
 }
 
 #if defined(CONFIG_PM_SLEEP) && defined(CONFIG_RTC_HCTOSYS_DEVICE)
@@ -1700,9 +1689,6 @@ void timekeeping_resume(void)
 	struct timespec64 ts_new, ts_delta;
 	u64 cycle_now, nsec;
 	bool inject_sleeptime = false;
-
-	if (!timekeeping_suspended)
-		return;
 
 	read_persistent_clock64(&ts_new);
 
@@ -2328,6 +2314,20 @@ static int timekeeping_validate_timex(const struct timex *txc)
 	return 0;
 }
 
+/**
+ * random_get_entropy_fallback - Returns the raw clock source value,
+ * used by random.c for platforms with no valid random_get_entropy().
+ */
+unsigned long random_get_entropy_fallback(void)
+{
+	struct tk_read_base *tkr = &tk_core.timekeeper.tkr_mono;
+	struct clocksource *clock = READ_ONCE(tkr->clock);
+
+	if (unlikely(timekeeping_suspended || !clock))
+		return 0;
+	return clock->read(clock);
+}
+EXPORT_SYMBOL_GPL(random_get_entropy_fallback);
 
 /**
  * do_adjtimex() - Accessor function to NTP __do_adjtimex function

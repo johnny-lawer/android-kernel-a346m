@@ -36,7 +36,6 @@
 #include "blk-stat.h"
 #include "blk-mq-sched.h"
 #include "blk-rq-qos.h"
-#include "mtk_mmc_block.h"
 
 static bool blk_mq_poll(struct request_queue *q, blk_qc_t cookie);
 static void blk_mq_poll_stats_start(struct request_queue *q);
@@ -103,28 +102,8 @@ static void blk_mq_check_inflight(struct blk_mq_hw_ctx *hctx,
 	 */
 	if (rq->part == mi->part)
 		mi->inflight[0]++;
-
-	/* XXX We can safely remove this 'if condition-check' due to the
-	 * change in blk_mq_in_flight function. It will be called
-	 * only when * mi->part->partno is not 0.
-	 */
 	if (mi->part->partno)
 		mi->inflight[1]++;
-}
-
-static void blk_mq_check_disk_inflight(struct blk_mq_hw_ctx *hctx,
-				struct request *rq, void *priv,
-				bool reserved)
-{
-	struct mq_inflight *mi = priv;
-
-	/* This function is called only when mi->part is a whole disk. Then
-	 * we can add in_flight count only to index[0] without checking whether
-	 * the rq is for this mi->part or not. We don't care index[1], and
-	 * this behavior is totally consistent with the original behavior
-	 * of part_in_flight function.
-	 */
-	mi->inflight[0]++;
 }
 
 void blk_mq_in_flight(struct request_queue *q, struct hd_struct *part,
@@ -133,10 +112,7 @@ void blk_mq_in_flight(struct request_queue *q, struct hd_struct *part,
 	struct mq_inflight mi = { .part = part, .inflight = inflight, };
 
 	inflight[0] = inflight[1] = 0;
-	if (mi.part->partno)
-		blk_mq_queue_tag_busy_iter(q, blk_mq_check_inflight, &mi);
-	else
-		blk_mq_queue_tag_busy_iter(q, blk_mq_check_disk_inflight, &mi);
+	blk_mq_queue_tag_busy_iter(q, blk_mq_check_inflight, &mi);
 }
 
 static void blk_mq_check_inflight_rw(struct blk_mq_hw_ctx *hctx,
@@ -149,26 +125,13 @@ static void blk_mq_check_inflight_rw(struct blk_mq_hw_ctx *hctx,
 		mi->inflight[rq_data_dir(rq)]++;
 }
 
-static void blk_mq_check_disk_inflight_rw(struct blk_mq_hw_ctx *hctx,
-				struct request *rq, void *priv,
-				bool reserved)
-{
-	struct mq_inflight *mi = priv;
-
-	/* This function should be called only when mi->part is a whole disk */
-	mi->inflight[rq_data_dir(rq)]++;
-}
-
 void blk_mq_in_flight_rw(struct request_queue *q, struct hd_struct *part,
 			 unsigned int inflight[2])
 {
 	struct mq_inflight mi = { .part = part, .inflight = inflight, };
 
 	inflight[0] = inflight[1] = 0;
-	if (mi.part->partno)
-		blk_mq_queue_tag_busy_iter(q, blk_mq_check_inflight_rw, &mi);
-	else
-		blk_mq_queue_tag_busy_iter(q, blk_mq_check_disk_inflight_rw, &mi);
+	blk_mq_queue_tag_busy_iter(q, blk_mq_check_inflight_rw, &mi);
 }
 
 void blk_freeze_queue_start(struct request_queue *q)
@@ -1516,7 +1479,6 @@ EXPORT_SYMBOL(blk_mq_queue_stopped);
  */
 void blk_mq_stop_hw_queue(struct blk_mq_hw_ctx *hctx)
 {
-	mt_bio_queue_free(current);
 	cancel_delayed_work(&hctx->run_work);
 
 	set_bit(BLK_MQ_S_STOPPED, &hctx->state);
@@ -1872,6 +1834,47 @@ void blk_mq_try_issue_list_directly(struct blk_mq_hw_ctx *hctx,
 	}
 }
 
+static size_t order_to_size(unsigned int order)
+{
+	return (size_t)PAGE_SIZE << order;
+}
+
+/* called before freeing request pool in @tags */
+static void blk_mq_clear_rq_mapping(struct blk_mq_tag_set *set,
+		struct blk_mq_tags *tags, unsigned int hctx_idx)
+{
+	struct blk_mq_tags *drv_tags = set->tags[hctx_idx];
+	struct ext_blk_mq_tags *drv_etags;
+	struct page *page;
+	unsigned long flags;
+
+	list_for_each_entry(page, &tags->page_list, lru) {
+		unsigned long start = (unsigned long)page_address(page);
+		unsigned long end = start + order_to_size(page->private);
+		int i;
+
+		for (i = 0; i < set->queue_depth; i++) {
+			struct request *rq = drv_tags->rqs[i];
+			unsigned long rq_addr = (unsigned long)rq;
+
+			if (rq_addr >= start && rq_addr < end) {
+				WARN_ON_ONCE(refcount_read(&rq->ref) != 0);
+				cmpxchg(&drv_tags->rqs[i], rq, NULL);
+			}
+		}
+	}
+
+	/*
+	 * Wait until all pending iteration is done.
+	 *
+	 * Request reference is cleared and it is guaranteed to be observed
+	 * after the ->lock is released.
+	 */
+	drv_etags = container_of(drv_tags, struct ext_blk_mq_tags, tags);
+	spin_lock_irqsave(&drv_etags->lock, flags);
+	spin_unlock_irqrestore(&drv_etags->lock, flags);
+}
+
 static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 {
 	const int is_sync = op_is_sync(bio->bi_opf);
@@ -2004,6 +2007,8 @@ void blk_mq_free_rqs(struct blk_mq_tag_set *set, struct blk_mq_tags *tags,
 		}
 	}
 
+	blk_mq_clear_rq_mapping(set, tags, hctx_idx);
+
 	while (!list_empty(&tags->page_list)) {
 		page = list_first_entry(&tags->page_list, struct page, lru);
 		list_del_init(&page->lru);
@@ -2061,11 +2066,6 @@ struct blk_mq_tags *blk_mq_alloc_rq_map(struct blk_mq_tag_set *set,
 	}
 
 	return tags;
-}
-
-static size_t order_to_size(unsigned int order)
-{
-	return (size_t)PAGE_SIZE << order;
 }
 
 static int blk_mq_init_request(struct blk_mq_tag_set *set, struct request *rq,
@@ -2239,6 +2239,7 @@ static int blk_mq_init_hctx(struct request_queue *q,
 	node = hctx->numa_node;
 	if (node == NUMA_NO_NODE)
 		node = hctx->numa_node = set->numa_node;
+
 	INIT_DELAYED_WORK(&hctx->run_work, blk_mq_run_work_fn);
 	spin_lock_init(&hctx->lock);
 	INIT_LIST_HEAD(&hctx->dispatch);

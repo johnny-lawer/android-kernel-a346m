@@ -299,7 +299,7 @@ struct pcmcia_device_id {
 #define INPUT_DEVICE_ID_LED_MAX		0x0f
 #define INPUT_DEVICE_ID_SND_MAX		0x07
 #define INPUT_DEVICE_ID_FF_MAX		0x7f
-#define INPUT_DEVICE_ID_SW_MAX		0x3f
+#define INPUT_DEVICE_ID_SW_MAX		0x20
 #define INPUT_DEVICE_ID_PROP_MAX	0x1f
 
 #define INPUT_DEVICE_ID_MATCH_BUS	1
@@ -448,22 +448,6 @@ struct pci_epf_device_id {
 	kernel_ulong_t driver_data;
 };
 
-/* i3c */
-
-#define I3C_MATCH_DCR			0x1
-#define I3C_MATCH_MANUF			0x2
-#define I3C_MATCH_PART			0x4
-#define I3C_MATCH_EXTRA_INFO		0x8
-
-struct i3c_device_id {
-	__u8 match_flags;
-	__u8 dcr;
-	__u16 manuf_id;
-	__u16 part_id;
-	__u16 extra_info;
-
-	const void *data;
-};
 /* spi */
 
 #define SPI_NAME_SIZE	32
@@ -652,9 +636,7 @@ struct x86_cpu_id {
 	__u16 steppings;
 };
 
-#define X86_FEATURE_MATCH(x) \
-	{ X86_VENDOR_ANY, X86_FAMILY_ANY, X86_MODEL_ANY, x }
-
+/* Wild cards for x86_cpu_id::vendor, family, model and feature */
 #define X86_VENDOR_ANY 0xffff
 #define X86_FAMILY_ANY 0
 #define X86_MODEL_ANY  0

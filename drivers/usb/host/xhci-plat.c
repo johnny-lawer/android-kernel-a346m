@@ -149,43 +149,6 @@ static const struct of_device_id usb_xhci_of_match[] = {
 MODULE_DEVICE_TABLE(of, usb_xhci_of_match);
 #endif
 
-#if IS_ENABLED(CONFIG_MTK_USB_OFFLOAD)
-static struct xhci_plat_priv_overwrite xhci_plat_vendor_overwrite;
-
-int xhci_plat_register_vendor_ops(struct xhci_vendor_ops *vendor_ops)
-{
-	if (vendor_ops == NULL)
-		return -EINVAL;
-
-	xhci_plat_vendor_overwrite.vendor_ops = vendor_ops;
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(xhci_plat_register_vendor_ops);
-
-static int xhci_vendor_init(struct xhci_hcd *xhci)
-{
-	struct xhci_vendor_ops *ops = NULL;
-
-	if (xhci_plat_vendor_overwrite.vendor_ops)
-		ops = xhci->vendor_ops = xhci_plat_vendor_overwrite.vendor_ops;
-
-	if (ops && ops->vendor_init)
-		return ops->vendor_init(xhci);
-	return 0;
-}
-
-static void xhci_vendor_cleanup(struct xhci_hcd *xhci)
-{
-	struct xhci_vendor_ops *ops = xhci_vendor_get_ops(xhci);
-
-	if (ops && ops->vendor_cleanup)
-		ops->vendor_cleanup(xhci);
-
-	xhci->vendor_ops = NULL;
-}
-#endif
-
 static int xhci_plat_probe(struct platform_device *pdev)
 {
 	const struct xhci_plat_priv *priv_match;
@@ -298,7 +261,7 @@ static int xhci_plat_probe(struct platform_device *pdev)
 			*priv = *priv_match;
 	}
 
-	device_wakeup_enable(hcd->self.controller);
+	device_set_wakeup_capable(&pdev->dev, true);
 
 	xhci->clk = clk;
 	xhci->reg_clk = reg_clk;
@@ -341,12 +304,6 @@ static int xhci_plat_probe(struct platform_device *pdev)
 			goto put_usb3_hcd;
 		hcd->skip_phy_initialization = 1;
 	}
-
-#if IS_ENABLED(CONFIG_MTK_USB_OFFLOAD)
-	ret = xhci_vendor_init(xhci);
-	if (ret)
-		goto disable_usb_phy;
-#endif
 
 	ret = usb_add_hcd(hcd, irq, IRQF_SHARED);
 	if (ret)
@@ -412,9 +369,6 @@ static int xhci_plat_remove(struct platform_device *dev)
 	usb_phy_shutdown(hcd->usb_phy);
 
 	usb_remove_hcd(hcd);
-#if IS_ENABLED(CONFIG_MTK_USB_OFFLOAD)
-	xhci_vendor_cleanup(xhci);
-#endif
 	usb_put_hcd(shared_hcd);
 
 	clk_disable_unprepare(clk);

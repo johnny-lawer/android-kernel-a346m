@@ -223,7 +223,8 @@ struct v4l2_buffer
     * - struct :c:type:`v4l2_timecode`
       - ``timecode``
       -
-      - When the ``V4L2_BUF_FLAG_TIMECODE`` flag is set in ``flags``, this
+      - When ``type`` is ``V4L2_BUF_TYPE_VIDEO_CAPTURE`` and the
+	``V4L2_BUF_FLAG_TIMECODE`` flag is set in ``flags``, this
 	structure contains a frame timecode. In
 	:c:type:`V4L2_FIELD_ALTERNATE <v4l2_field>` mode the top and
 	bottom field contain the same timecode. Timecodes are intended to
@@ -305,23 +306,10 @@ struct v4l2_buffer
       - A place holder for future extensions. Drivers and applications
 	must set this to 0.
     * - __u32
-      - ``request_fd``
+      - ``reserved``
       -
-      - The file descriptor of the request to queue the buffer to. If the flag
-        ``V4L2_BUF_FLAG_REQUEST_FD`` is set, then the buffer will be
-	queued to this request. If the flag is not set, then this field will
-	be ignored.
-
-	The ``V4L2_BUF_FLAG_REQUEST_FD`` flag and this field are only used by
-	:ref:`ioctl VIDIOC_QBUF <VIDIOC_QBUF>` and ignored by other ioctls that
-	take a :c:type:`v4l2_buffer` as argument.
-
-	Applications should not set ``V4L2_BUF_FLAG_REQUEST_FD`` for any ioctls
-	other than :ref:`VIDIOC_QBUF <VIDIOC_QBUF>`.
-
-	If the device does not support requests, then ``EACCES`` will be returned.
-	If requests are supported but an invalid request file descriptor is
-	given, then ``EINVAL`` will be returned.
+      - A place holder for future extensions. Drivers and applications
+	must set this to 0.
 
 
 
@@ -526,11 +514,6 @@ Buffer Flags
 	streaming may continue as normal and the buffer may be reused
 	normally. Drivers set this flag when the ``VIDIOC_DQBUF`` ioctl is
 	called.
-    * .. _`V4L2-BUF-FLAG-IN-REQUEST`:
-
-      - ``V4L2_BUF_FLAG_IN_REQUEST``
-      - 0x00000080
-      - This buffer is part of a request that hasn't been queued yet.
     * .. _`V4L2-BUF-FLAG-KEYFRAME`:
 
       - ``V4L2_BUF_FLAG_KEYFRAME``
@@ -606,11 +589,6 @@ Buffer Flags
 	the format. Any Any subsequent call to the
 	:ref:`VIDIOC_DQBUF <VIDIOC_QBUF>` ioctl will not block anymore,
 	but return an ``EPIPE`` error code.
-    * .. _`V4L2-BUF-FLAG-REQUEST-FD`:
-
-      - ``V4L2_BUF_FLAG_REQUEST_FD``
-      - 0x00800000
-      - The ``request_fd`` field contains a valid file descriptor.
     * .. _`V4L2-BUF-FLAG-TIMESTAMP-MASK`:
 
       - ``V4L2_BUF_FLAG_TIMESTAMP_MASK``
@@ -703,10 +681,10 @@ enum v4l2_memory
 Timecodes
 =========
 
-The :c:type:`v4l2_buffer_timecode` structure is designed to hold a
-:ref:`smpte12m` or similar timecode.
-(struct :c:type:`timeval` timestamps are stored in the struct
-:c:type:`v4l2_buffer` ``timestamp`` field.)
+The struct :c:type:`v4l2_timecode` structure is designed to hold a
+:ref:`smpte12m` or similar timecode. (struct
+struct :c:type:`timeval` timestamps are stored in struct
+:c:type:`v4l2_buffer` field ``timestamp``.)
 
 
 .. c:type:: v4l2_timecode

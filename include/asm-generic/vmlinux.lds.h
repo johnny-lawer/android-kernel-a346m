@@ -244,6 +244,7 @@
 #define DATA_DATA							\
 	*(.xiptext)							\
 	*(DATA_MAIN)							\
+	*(.data..decrypted)						\
 	*(.ref.data)							\
 	*(.data..shared_aligned) /* percpu related */			\
 	MEM_KEEP(init.data*)						\
@@ -315,22 +316,6 @@
 	__end_ro_after_init = .;
 #endif
 
-#ifdef CONFIG_UH
-#define UH_RO_SECTION						\
-	. = ALIGN(4096);						\
-	.uh_bss       : AT(ADDR(.uh_bss) - LOAD_OFFSET) {	\
-		*(.uh_bss.page_aligned)				\
-		*(.uh_bss)						\
-	} = 0								\
-									\
-	.uh_ro          : AT(ADDR(.uh_ro) - LOAD_OFFSET) {	\
-		*(.rkp_ro)						\
-		*(.kdp_ro)						\
-	}
-#else
-#define UH_RO_SECTION
-#endif
-
 /*
  * Read only Data
  */
@@ -351,9 +336,6 @@
 	.rodata1          : AT(ADDR(.rodata1) - LOAD_OFFSET) {		\
 		*(.rodata1)						\
 	}								\
-									\
-	/* UH */							\
-	UH_RO_SECTION						\
 									\
 	/* PCI quirks */						\
 	.pci_fixup        : AT(ADDR(.pci_fixup) - LOAD_OFFSET) {	\
@@ -531,6 +513,7 @@
 		*(.text..refcount)					\
 		*(.text..ftrace)					\
 		*(.ref.text)						\
+		*(.text.asan.* .text.tsan.*)				\
 	MEM_KEEP(init.text*)						\
 	MEM_KEEP(exit.text*)						\
 

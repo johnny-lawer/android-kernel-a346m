@@ -13,9 +13,6 @@ if TEE
 menu "TEE drivers"
 
 source "drivers/tee/optee/Kconfig"
-source "drivers/tee/gud/Kconfig"
-source "drivers/tee/teei/Kconfig"
-source "drivers/tee/tkcore/Kconfig"
 
 endmenu
 

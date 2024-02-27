@@ -64,13 +64,6 @@
 #include <linux/cgroup.h>
 #include <linux/wait.h>
 
-#ifdef CONFIG_MTK_SCHED_EXTENSION
-#define CS_SCHED_PREFER_NONE   0
-#define CS_SCHED_PREFER_BIG    1
-#define CS_SCHED_PREFER_LITTLE 2
-#define CS_SCHED_PREFER_END    3
-#endif
-
 DEFINE_STATIC_KEY_FALSE(cpusets_pre_enable_key);
 DEFINE_STATIC_KEY_FALSE(cpusets_enabled_key);
 
@@ -142,9 +135,6 @@ struct cpuset {
 
 	/* for custom sched domain */
 	int relax_domain_level;
-#ifdef CONFIG_MTK_SCHED_EXTENSION
-	u64 prefer_cpu;
-#endif
 };
 
 static inline struct cpuset *css_cs(struct cgroup_subsys_state *css)
@@ -318,8 +308,7 @@ static DECLARE_WAIT_QUEUE_HEAD(cpuset_attach_wq);
 static inline bool is_in_v2_mode(void)
 {
 	return cgroup_subsys_on_dfl(cpuset_cgrp_subsys) ||
-	      (cpuset_cgrp_subsys.root->flags & CGRP_ROOT_CPUSET_V2_MODE) ||
-		true;
+	      (cpuset_cgrp_subsys.root->flags & CGRP_ROOT_CPUSET_V2_MODE);
 }
 
 /*
@@ -724,7 +713,8 @@ static int generate_sched_domains(cpumask_var_t **domains,
 					 housekeeping_cpumask(HK_FLAG_DOMAIN))))
 			continue;
 
-		if (is_sched_load_balance(cp))
+		if (is_sched_load_balance(cp) &&
+		    !cpumask_empty(cp->effective_cpus))
 			csa[csn++] = cp;
 
 		/* skip @cp's subtree */
@@ -831,19 +821,6 @@ done:
 	return ndoms;
 }
 
-static void cpuset_sched_change_begin(void)
-{
-	cpus_read_lock();
-	mutex_lock(&cpuset_mutex);
-}
-
-static void cpuset_sched_change_end(void)
-{
-	mutex_unlock(&cpuset_mutex);
-	cpus_read_unlock();
-}
-
-
 /*
  * Rebuild scheduler domains.
  *
@@ -853,13 +830,15 @@ static void cpuset_sched_change_end(void)
  * 'cpus' is removed, then call this routine to rebuild the
  * scheduler's dynamic sched domains.
  *
+ * Call with cpuset_mutex held.  Takes get_online_cpus().
  */
-static void rebuild_sched_domains_cpuslocked(void)
+static void rebuild_sched_domains_locked(void)
 {
 	struct sched_domain_attr *attr;
 	cpumask_var_t *doms;
 	int ndoms;
 
+	lockdep_assert_cpus_held();
 	lockdep_assert_held(&cpuset_mutex);
 
 	/*
@@ -877,16 +856,18 @@ static void rebuild_sched_domains_cpuslocked(void)
 	partition_sched_domains(ndoms, doms, attr);
 }
 #else /* !CONFIG_SMP */
-static void rebuild_sched_domains_cpuslocked(void)
+static void rebuild_sched_domains_locked(void)
 {
 }
 #endif /* CONFIG_SMP */
 
 void rebuild_sched_domains(void)
 {
-	cpuset_sched_change_begin();
-	rebuild_sched_domains_cpuslocked();
-	cpuset_sched_change_end();
+	get_online_cpus();
+	mutex_lock(&cpuset_mutex);
+	rebuild_sched_domains_locked();
+	mutex_unlock(&cpuset_mutex);
+	put_online_cpus();
 }
 
 /**
@@ -972,7 +953,7 @@ static void update_cpumasks_hier(struct cpuset *cs, struct cpumask *new_cpus)
 	rcu_read_unlock();
 
 	if (need_rebuild_sched_domains)
-		rebuild_sched_domains_cpuslocked();
+		rebuild_sched_domains_locked();
 }
 
 /**
@@ -1306,7 +1287,7 @@ static int update_relax_domain_level(struct cpuset *cs, s64 val)
 		cs->relax_domain_level = val;
 		if (!cpumask_empty(cs->cpus_allowed) &&
 		    is_sched_load_balance(cs))
-			rebuild_sched_domains_cpuslocked();
+			rebuild_sched_domains_locked();
 	}
 
 	return 0;
@@ -1339,6 +1320,7 @@ static void update_tasks_flags(struct cpuset *cs)
  *
  * Call with cpuset_mutex held.
  */
+
 static int update_flag(cpuset_flagbits_t bit, struct cpuset *cs,
 		       int turning_on)
 {
@@ -1371,7 +1353,7 @@ static int update_flag(cpuset_flagbits_t bit, struct cpuset *cs,
 	spin_unlock_irq(&callback_lock);
 
 	if (!cpumask_empty(trialcs->cpus_allowed) && balance_flag_changed)
-		rebuild_sched_domains_cpuslocked();
+		rebuild_sched_domains_locked();
 
 	if (spread_flag_changed)
 		update_tasks_flags(cs);
@@ -1532,7 +1514,9 @@ static void cpuset_cancel_attach(struct cgroup_taskset *tset)
 	cs = css_cs(css);
 
 	mutex_lock(&cpuset_mutex);
-	css_cs(css)->attach_in_progress--;
+	cs->attach_in_progress--;
+	if (!cs->attach_in_progress)
+		wake_up(&cpuset_attach_wq);
 	mutex_unlock(&cpuset_mutex);
 }
 
@@ -1556,6 +1540,7 @@ static void cpuset_attach(struct cgroup_taskset *tset)
 	cgroup_taskset_first(tset, &css);
 	cs = css_cs(css);
 
+	lockdep_assert_cpus_held();     /* see cgroup_attach_lock() */
 	mutex_lock(&cpuset_mutex);
 
 	/* prepare for attach */
@@ -1630,9 +1615,6 @@ typedef enum {
 	FILE_MEMORY_PRESSURE,
 	FILE_SPREAD_PAGE,
 	FILE_SPREAD_SLAB,
-#ifdef CONFIG_MTK_SCHED_EXTENSION
-	FILE_PREFER_CPU
-#endif
 } cpuset_filetype_t;
 
 static int cpuset_write_u64(struct cgroup_subsys_state *css, struct cftype *cft,
@@ -1642,7 +1624,8 @@ static int cpuset_write_u64(struct cgroup_subsys_state *css, struct cftype *cft,
 	cpuset_filetype_t type = cft->private;
 	int retval = 0;
 
-	cpuset_sched_change_begin();
+	get_online_cpus();
+	mutex_lock(&cpuset_mutex);
 	if (!is_cpuset_online(cs)) {
 		retval = -ENODEV;
 		goto out_unlock;
@@ -1673,18 +1656,13 @@ static int cpuset_write_u64(struct cgroup_subsys_state *css, struct cftype *cft,
 	case FILE_SPREAD_SLAB:
 		retval = update_flag(CS_SPREAD_SLAB, cs, val);
 		break;
-#ifdef CONFIG_MTK_SCHED_EXTENSION
-	case FILE_PREFER_CPU:
-		if (val >= CS_SCHED_PREFER_NONE && val < CS_SCHED_PREFER_END)
-			cs->prefer_cpu = val;
-		break;
-#endif
 	default:
 		retval = -EINVAL;
 		break;
 	}
 out_unlock:
-	cpuset_sched_change_end();
+	mutex_unlock(&cpuset_mutex);
+	put_online_cpus();
 	return retval;
 }
 
@@ -1695,7 +1673,8 @@ static int cpuset_write_s64(struct cgroup_subsys_state *css, struct cftype *cft,
 	cpuset_filetype_t type = cft->private;
 	int retval = -ENODEV;
 
-	cpuset_sched_change_begin();
+	get_online_cpus();
+	mutex_lock(&cpuset_mutex);
 	if (!is_cpuset_online(cs))
 		goto out_unlock;
 
@@ -1708,7 +1687,8 @@ static int cpuset_write_s64(struct cgroup_subsys_state *css, struct cftype *cft,
 		break;
 	}
 out_unlock:
-	cpuset_sched_change_end();
+	mutex_unlock(&cpuset_mutex);
+	put_online_cpus();
 	return retval;
 }
 
@@ -1747,7 +1727,8 @@ static ssize_t cpuset_write_resmask(struct kernfs_open_file *of,
 	kernfs_break_active_protection(of->kn);
 	flush_work(&cpuset_hotplug_work);
 
-	cpuset_sched_change_begin();
+	get_online_cpus();
+	mutex_lock(&cpuset_mutex);
 	if (!is_cpuset_online(cs))
 		goto out_unlock;
 
@@ -1771,7 +1752,8 @@ static ssize_t cpuset_write_resmask(struct kernfs_open_file *of,
 
 	free_trial_cpuset(trialcs);
 out_unlock:
-	cpuset_sched_change_end();
+	mutex_unlock(&cpuset_mutex);
+	put_online_cpus();
 	kernfs_unbreak_active_protection(of->kn);
 	css_put(&cs->css);
 	flush_workqueue(cpuset_migrate_mm_wq);
@@ -1838,10 +1820,6 @@ static u64 cpuset_read_u64(struct cgroup_subsys_state *css, struct cftype *cft)
 		return is_spread_page(cs);
 	case FILE_SPREAD_SLAB:
 		return is_spread_slab(cs);
-#ifdef CONFIG_MTK_SCHED_EXTENSION
-	case FILE_PREFER_CPU:
-		return cs->prefer_cpu;
-#endif
 	default:
 		BUG();
 	}
@@ -1968,14 +1946,6 @@ static struct cftype files[] = {
 		.write_u64 = cpuset_write_u64,
 		.private = FILE_MEMORY_PRESSURE_ENABLED,
 	},
-#ifdef CONFIG_MTK_SCHED_EXTENSION
-	{
-		.name = "prefer_cpu",
-		.read_u64 = cpuset_read_u64,
-		.write_u64 = cpuset_write_u64,
-		.private = FILE_PREFER_CPU,
-	},
-#endif
 
 	{ }	/* terminate */
 };
@@ -2033,6 +2003,7 @@ static int cpuset_css_online(struct cgroup_subsys_state *css)
 	if (!parent)
 		return 0;
 
+	get_online_cpus();
 	mutex_lock(&cpuset_mutex);
 
 	set_bit(CS_ONLINE, &cs->flags);
@@ -2084,20 +2055,22 @@ static int cpuset_css_online(struct cgroup_subsys_state *css)
 	spin_unlock_irq(&callback_lock);
 out_unlock:
 	mutex_unlock(&cpuset_mutex);
+	put_online_cpus();
 	return 0;
 }
 
 /*
  * If the cpuset being removed has its flag 'sched_load_balance'
  * enabled, then simulate turning sched_load_balance off, which
- * will call rebuild_sched_domains_cpuslocked().
+ * will call rebuild_sched_domains_locked().
  */
 
 static void cpuset_css_offline(struct cgroup_subsys_state *css)
 {
 	struct cpuset *cs = css_cs(css);
 
-	cpuset_sched_change_begin();
+	get_online_cpus();
+	mutex_lock(&cpuset_mutex);
 
 	if (is_sched_load_balance(cs))
 		update_flag(CS_SCHED_LOAD_BALANCE, cs, 0);
@@ -2105,7 +2078,8 @@ static void cpuset_css_offline(struct cgroup_subsys_state *css)
 	cpuset_dec();
 	clear_bit(CS_ONLINE, &cs->flags);
 
-	cpuset_sched_change_end();
+	mutex_unlock(&cpuset_mutex);
+	put_online_cpus();
 }
 
 static void cpuset_css_free(struct cgroup_subsys_state *css)
@@ -2455,8 +2429,11 @@ static struct notifier_block cpuset_track_online_nodes_nb = {
  */
 void __init cpuset_init_smp(void)
 {
-	cpumask_copy(top_cpuset.cpus_allowed, cpu_active_mask);
-	top_cpuset.mems_allowed = node_states[N_MEMORY];
+	/*
+	 * cpus_allowd/mems_allowed set to v2 values in the initial
+	 * cpuset_bind() call will be reset to v1 values in another
+	 * cpuset_bind() call when v1 cpuset is mounted.
+	 */
 	top_cpuset.old_mems_allowed = top_cpuset.mems_allowed;
 
 	cpumask_copy(top_cpuset.effective_cpus, cpu_active_mask);
@@ -2826,16 +2803,3 @@ void cpuset_task_status_allowed(struct seq_file *m, struct task_struct *task)
 	seq_printf(m, "Mems_allowed_list:\t%*pbl\n",
 		   nodemask_pr_args(&task->mems_allowed));
 }
-
-#ifdef CONFIG_MTK_SCHED_EXTENSION
-int task_cs_cpu_perfer(struct task_struct *task)
-{
-	int cpu_prefer = 0;
-
-	rcu_read_lock();
-	cpu_prefer = task_cs(task)->prefer_cpu;
-	rcu_read_unlock();
-
-	return cpu_prefer;
-}
-#endif

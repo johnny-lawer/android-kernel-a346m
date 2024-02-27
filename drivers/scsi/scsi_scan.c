@@ -303,11 +303,6 @@ static struct scsi_device *scsi_alloc_sdev(struct scsi_target *starget,
 		}
 	}
 
-#ifdef CONFIG_BLK_TURBO_WRITE
-	if (!strncmp(shost->hostt->name, "ufshcd", 6))
-		scsi_alloc_tw(sdev);
-#endif
-
 	return sdev;
 
 out_device_destroy:
@@ -467,7 +462,8 @@ static struct scsi_target *scsi_alloc_target(struct device *parent,
 		error = shost->hostt->target_alloc(starget);
 
 		if(error) {
-			dev_printk(KERN_ERR, dev, "target allocation failed, error %d\n", error);
+			if (error != -ENXIO)
+				dev_err(dev, "target allocation failed, error %d\n", error);
 			/* don't want scsi_target_reap to do the final
 			 * put because it will be under the host lock */
 			scsi_target_destroy(starget);

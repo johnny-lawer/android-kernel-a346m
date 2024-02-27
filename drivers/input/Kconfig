@@ -184,10 +184,6 @@ config INPUT_APMPOWER
 	  To compile this driver as a module, choose M here: the
 	  module will be called apm-power.
 
-config SEC_DEBUG_TSP_LOG
-	tristate "Support for tsp_msg"
-	default n
-
 comment "Input Device Drivers"
 
 source "drivers/input/keyboard/Kconfig"
@@ -199,8 +195,6 @@ source "drivers/input/joystick/Kconfig"
 source "drivers/input/tablet/Kconfig"
 
 source "drivers/input/touchscreen/Kconfig"
-
-source "drivers/input/fingerprint/Kconfig"
 
 source "drivers/input/misc/Kconfig"
 

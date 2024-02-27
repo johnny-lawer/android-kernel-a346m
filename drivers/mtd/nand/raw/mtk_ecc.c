@@ -51,6 +51,7 @@
 
 struct mtk_ecc_caps {
 	u32 err_mask;
+	u32 err_shift;
 	const u8 *ecc_strength;
 	const u32 *ecc_regs;
 	u8 num_ecc_strength;
@@ -84,7 +85,7 @@ static const u8 ecc_strength_mt2712[] = {
 };
 
 static const u8 ecc_strength_mt7622[] = {
-	4, 6, 8, 10, 12, 14, 16
+	4, 6, 8, 10, 12
 };
 
 enum mtk_ecc_regs {
@@ -229,7 +230,7 @@ void mtk_ecc_get_stats(struct mtk_ecc *ecc, struct mtk_ecc_stats *stats,
 	for (i = 0; i < sectors; i++) {
 		offset = (i >> 2) << 2;
 		err = readl(ecc->regs + ECC_DECENUM0 + offset);
-		err = err >> ((i % 4) * 8);
+		err = err >> ((i % 4) * ecc->caps->err_shift);
 		err &= ecc->caps->err_mask;
 		if (err == ecc->caps->err_mask) {
 			/* uncorrectable errors */
@@ -263,9 +264,8 @@ static void mtk_ecc_hw_init(struct mtk_ecc *ecc)
 
 static struct mtk_ecc *mtk_ecc_get(struct device_node *np)
 {
-	struct mtk_ecc *ecc = NULL;
 	struct platform_device *pdev;
-	int ret;
+	struct mtk_ecc *ecc;
 
 	pdev = of_find_device_by_node(np);
 	if (!pdev || !platform_get_drvdata(pdev))
@@ -273,15 +273,7 @@ static struct mtk_ecc *mtk_ecc_get(struct device_node *np)
 
 	get_device(&pdev->dev);
 	ecc = platform_get_drvdata(pdev);
-	if (ecc == NULL) {
-		pr_info("failed to get ecc point.\n");
-		return NULL;
-	}
-	ret = clk_prepare_enable(ecc->clk);
-	if (ret) {
-		pr_info("failed to enable clk.\n");
-		return NULL;
-	}
+	clk_prepare_enable(ecc->clk);
 	mtk_ecc_hw_init(ecc);
 
 	return ecc;
@@ -462,6 +454,7 @@ EXPORT_SYMBOL(mtk_ecc_get_parity_bits);
 
 static const struct mtk_ecc_caps mtk_ecc_caps_mt2701 = {
 	.err_mask = 0x3f,
+	.err_shift = 8,
 	.ecc_strength = ecc_strength_mt2701,
 	.ecc_regs = mt2701_ecc_regs,
 	.num_ecc_strength = 20,
@@ -472,6 +465,7 @@ static const struct mtk_ecc_caps mtk_ecc_caps_mt2701 = {
 
 static const struct mtk_ecc_caps mtk_ecc_caps_mt2712 = {
 	.err_mask = 0x7f,
+	.err_shift = 8,
 	.ecc_strength = ecc_strength_mt2712,
 	.ecc_regs = mt2712_ecc_regs,
 	.num_ecc_strength = 23,
@@ -481,10 +475,11 @@ static const struct mtk_ecc_caps mtk_ecc_caps_mt2712 = {
 };
 
 static const struct mtk_ecc_caps mtk_ecc_caps_mt7622 = {
-	.err_mask = 0x3f,
+	.err_mask = 0x1f,
+	.err_shift = 5,
 	.ecc_strength = ecc_strength_mt7622,
 	.ecc_regs = mt7622_ecc_regs,
-	.num_ecc_strength = 7,
+	.num_ecc_strength = 5,
 	.ecc_mode_shift = 4,
 	.parity_bits = 13,
 	.pg_irq_sel = 0,
